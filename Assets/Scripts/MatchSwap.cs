@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class MatchSwap : MonoBehaviour
+public class MatchSwap : MatchMath
 {
     private GameObject oriMatch, tarLocation;
     private Vector3 tempPos, tempAngles;

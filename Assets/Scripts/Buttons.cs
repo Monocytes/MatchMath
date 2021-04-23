@@ -1,7 +1,7 @@
 ﻿using UnityEngine;
 using UnityEngine.SceneManagement;
 
-public class Buttons : MonoBehaviour
+public class Buttons : MatchMath
 {
     GameObject pausePanel;
 
@@ -19,31 +19,22 @@ public class Buttons : MonoBehaviour
 
     public void CheckAnswer()
     {
-        GameManager.Instance.CheckAnswer();
+        GameEvents.ReportGameStateChange(GameState.CHECK);
     }
 
     public void Return()
     {
-        GameManager.Instance.isPaused = !GameManager.Instance.isPaused;
-        if (GameManager.Instance.isPaused == false)
-        {
-            pausePanel.SetActive(false);
-            Time.timeScale = 1;
-        }
+        GameEvents.ReportGameStateChange(GameState.INGAME);
     }
 
     public void Replay()
     {
-        GameManager.Instance.Replay();
+        GameEvents.ReportGameStateChange(GameState.REPLAY);
     }
 
     public void NextQuestion()
     {
-        Time.timeScale = 1;
-        GameManager.Instance.CreateGame();
-        FindObjectOfType<UpdateUI>().incorrectPanel.SetActive(false);
-        FindObjectOfType<UpdateUI>().correctPanel.SetActive(false);
-        FindObjectOfType<UpdateUI>().levelSelect.SetActive(false);
+        GameEvents.ReportGameStateChange(GameState.START);
     }
 
     public void DoQuit()

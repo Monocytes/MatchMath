@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-public class DragMatch : MonoBehaviour
+public class DragMatch : MatchMath
 {
     private Vector3 mOffset;
 

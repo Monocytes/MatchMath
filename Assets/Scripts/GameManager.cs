@@ -2,20 +2,30 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class GameManager : MonoBehaviour
+/*Match Position:
+ * Number Structure
+ *     1
+ *     _ 
+ *   6| |2
+ *     _7
+ *   5|_|3  
+ *     4
+ */
+
+
+public enum GameState {START, INGAME, PAUSE, SELECT, REPLAY, CHECK, CORRECT, WRONG }
+public class GameManager : Singleton<GameManager>
 {
-    public static GameManager Instance;
+    private Vector3[] offsetPos = new Vector3[9]; //local position for each match within number/signs
 
-    private Vector3[] offsetPos = new Vector3[9]; //local position for each match number
-
-    private GameObject[] matchs = new GameObject[32]; //array form maximum matchs numbers
+    private GameObject[] matchs = new GameObject[32]; //array form maximum matchs numbers: 28 for numbers and 4 for signs
     private GameObject[] mNumber = new GameObject[4]; //spawn points for match assembled number
     private GameObject[] mSymbols = new GameObject[2]; //spawn points for match assembled symbols
 
     private int numberOne, numberTwo, numberThree, numberFour;
 
-    private string[] signs = new string[3];
-    private string[] symbols = new string[2];
+    private string[] signs = new string[3];  //possible signs within equation
+    private string[] symbols = new string[2]; // signs used in equation
     private int result;
 
     int[] testingNo;
@@ -40,25 +50,18 @@ public class GameManager : MonoBehaviour
     public int Corrected { get { return _corrected; } set { _corrected = value; } }
     private int _attempt;
     public int Attempt { get { return _attempt; } set { _attempt = value; } }
+    private int _equation;
+    public int Equation { get { return _equation; } set { _equation = value; } }
 
     public bool isPaused = false;
 
-    private void Awake()
-    {
-        if (Instance == null)
-        {
-            Instance = this;
-            DontDestroyOnLoad(gameObject);
-        }
-        else
-            Destroy(this);
-    }
+    public GameState gameState;
 
         // Start is called before the first frame update
         void Start()
     {
         //assign offset for local positions
-        //offset for numbers
+        //offsets for numbers
         
         offsetPos[0] = new Vector3(0f, 5.6f, 0f);
         offsetPos[1] = new Vector3(2.7f, 2.7f, 0f);
@@ -81,63 +84,102 @@ public class GameManager : MonoBehaviour
 
         symbols[1] = signs[2];
 
-        CreateGame();
-
+        GameEvents.ReportGameStateChange(GameState.START);
+        _equation = 0;
         _corrected = 0;
-        _attempt = 1;
+        _attempt = 3;
     }
 
     private void Update()
     {
-        if (Input.GetMouseButtonDown(1))
-            Replay();
+        switch(gameState)
+        {
+            case GameState.INGAME:
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    GameEvents.ReportGameStateChange(GameState.PAUSE);
+                break;
+            case GameState.PAUSE:
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    GameEvents.ReportGameStateChange(GameState.INGAME);
+                break;
+        }
     }
 
-    private IEnumerator CreatingGame()
+    public void OnGameStateChange(GameState state)
     {
-        FindObjectOfType<UpdateUI>().preparePanel.SetActive(true);
+        gameState = state;
+        switch (state)
+        {
+            case GameState.START:
+                _attempt = 3;
+                ClearNumber();
+                ClearRecord();
+                StartCoroutine(CreatingEquation());
+                break;
+            case GameState.INGAME:
+                break;
+            case GameState.PAUSE:
+                break;
+            case GameState.REPLAY:
+                Replay();
+                GameEvents.ReportGameStateChange(GameState.INGAME);
+                break;
+            case GameState.CHECK:
+                CheckAnswer();
+                break;
+            case GameState.CORRECT:
+                StartCoroutine(Correct());
+                break;
+            case GameState.WRONG:
+                StartCoroutine(Wrong());
+                break;
+        }
+    }
 
+    private void OnEnable()
+    {
+        GameEvents.OnGameStateChange += OnGameStateChange;
+    }
+
+    private void OnDisable()
+    {
+        GameEvents.OnGameStateChange -= OnGameStateChange;   
+    }
+
+    void ClearNumber()
+    {
         for (int i = 0; i < mNumber.Length; i++)
         {
             if (mNumber[i] != null)
                 Destroy(mNumber[i]);
-
-            if (mRecord[i] != null)
-                Destroy(mRecord[i]);
         }
 
-        for(int i =0; i < mSymbols.Length; i++)
+        for (int i = 0; i < mSymbols.Length; i++)
         {
             if (mSymbols[i] != null)
                 Destroy(mSymbols[i]);
+        }
 
+    }
+    void ClearRecord()
+    {
+        for (int i = 0; i < mRecord.Length; i++)
+        {
             if (mRecord[i] != null)
                 Destroy(mRecord[i]);
         }
-        
-        CreateTargetPosition();
-        PreMatchPos();
-        yield return new WaitForSeconds(0.5f);
-        CreatingList(mNumber, mSymbols);
-       
-        if (mtoM != 0 && eS != 0 && canSwap != 0)
+
+        for (int i = 0; i < mSymbols.Length; i++)
         {
-            int i = Random.Range(0, 2);
-            if (i == 0)
-                SwapEmpty();
-            else
-                SwapMatch();
+            if (sRecord[i] != null)
+                Destroy(sRecord[i]);
         }
-
-        else if (canSwap != 0 && mtoM == 0 || eS ==0)   
-            SwapMatch();
-
-        Record();
-        FindObjectOfType<UpdateUI>().preparePanel.SetActive(false);
     }
 
     void CreateTargetPosition()
     {
+        //equation arrangement: number1 sign1 number2 sign2 number3 number4
+
         mNumber[0] = new GameObject("Number 1");
         mNumber[0].transform.position = new Vector3(-20f, 0f, 0f);
         mNumber[1] = new GameObject("Number 2");
@@ -153,14 +195,30 @@ public class GameManager : MonoBehaviour
         mSymbols[1].transform.position = new Vector3(4f, 0f, 0f);
     }
 
-    public void CreateGame()
+    private IEnumerator CreatingEquation()
     {
-        Time.timeScale = 1;
-        StartCoroutine("CreatingGame");
-        _attempt = 1;
+        CreateTargetPosition();
+        PreMatchPos();
+        yield return new WaitForSeconds(0.5f);
 
-        if (isCorrect == true)
-            _corrected++;
+        CreatingList(mNumber, mSymbols);
+       
+        if (mtoM != 0 && eS != 0 && canSwap != 0)
+        {
+            int i = Random.Range(0, 2);
+            if (i == 0)
+                SwapEmpty();
+            else
+                SwapMatch();
+        }
+
+        else if (canSwap != 0 && mtoM == 0 || eS ==0)   
+            SwapMatch();
+
+        Record();
+        _equation++;
+
+        GameEvents.ReportGameStateChange(GameState.INGAME);
     }
 
     public void PreMatchPos()  //creating correct equation for later modification.
@@ -171,17 +229,18 @@ public class GameManager : MonoBehaviour
             two = Random.Range(0, 10);
 
         int i = Random.Range(0, 2);
+
         if (one == 8 && two == 4 && signs[i] == "-")
-            two = Random.Range(5, 10);       
+            two = Random.Range(0, 10);       
 
         Calculation(signs[i], one, two);
 
         if(result >= 10)
         {
             sigleDig = false;
+            mNumber[3].SetActive(true);
             numberThree = 1;
             numberFour = result-10;
-            mNumber[3].SetActive(true);
         }
         else
         {
@@ -203,7 +262,7 @@ public class GameManager : MonoBehaviour
 
     }
 
-     void Calculation (string symbols, int number1, int number2)
+    void Calculation (string symbols, int number1, int number2)
     {
         if (symbols == "+")
         {
@@ -230,151 +289,153 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public void SpawnNumber (int i, int num) //assign match location for each number (i = array index in number group, num = spawn number)
+    public void SpawnNumber (int i, int num) //assign match location for each number (i = array index for number position, num = number to be s)
     {
-        if (num == 0)
+        switch (num)
         {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+            case 0:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
 
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-        }
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 1)
-        {
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+            case 1:
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
 
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-        }
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 2)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-          
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-        }
+            case 2:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
 
-        if (num == 3)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-        }
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 4)
-        {
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+            case 3:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
 
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-        }
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 5)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-        }
+            case 4:
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
 
-        if (num == 6)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-        }
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 7)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-        }
+            case 5:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
 
-        if (num == 8)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-        }
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                break;
 
-        if (num == 9)
-        {
-            matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
-            matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
-            matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
-            matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
-            matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+            case 6:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
 
-            matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                break;
+
+            case 7:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                break;
+
+            case 8:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                break;
+
+            case 9:
+                matchs[0 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[0], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+                matchs[1 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[1], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[2 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[2], Quaternion.Euler(0f, 0f, 180f), mNumber[i].transform) as GameObject;
+                matchs[3 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[3], Quaternion.Euler(0f, 0f, 90f), mNumber[i].transform) as GameObject;
+                matchs[5 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[5], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                matchs[6 + i * 7] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mNumber[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mNumber[i].transform) as GameObject;
+
+                matchs[4 + i * 7] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mNumber[i].transform.position + offsetPos[4], Quaternion.Euler(0f, 0f, 0f), mNumber[i].transform) as GameObject;
+                break;
         }
     }
 
     public void SpawnSigns (int i, string sign) //assign symbols location.
     {
-        if (sign == "+")
+        switch(sign)
         {
-            matchs[28] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
-            matchs[29] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, 0f), mSymbols[i].transform) as GameObject;
-        }
+            case "+":
+                matchs[28] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
+                matchs[29] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, 0f), mSymbols[i].transform) as GameObject;
+               break;
 
-        if (sign == "-")
-        {
-            matchs[28] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
-            matchs[29] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, 0f), mSymbols[i].transform) as GameObject;
-        }
+            case "-":
+                matchs[28] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
+                matchs[29] = Instantiate(Resources.Load("Prefab/PosHolderPrefab"), mSymbols[i].transform.position + offsetPos[6], Quaternion.Euler(0f, 0f, 0f), mSymbols[i].transform) as GameObject;
+                break;
 
-        if (sign == "=")
-        {
-            matchs[30] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[7], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
-            matchs[31] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[8], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
+            case "=":
+                matchs[30] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[7], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
+                matchs[31] = Instantiate(Resources.Load("Prefab/MatchPrefab"), mSymbols[i].transform.position + offsetPos[8], Quaternion.Euler(0f, 0f, -90f), mSymbols[i].transform) as GameObject;
+                break;
         }
     }
 
     public void TestMatchNumber (GameObject[] matchGrp) // transfrom match number gameobject group into int
     {
+        /* Match posistion:
+         * Number Structure
+         *     0
+         *     _ 
+         *   5| |1
+         *     _6
+         *   4|_|2  
+         *     3
+         */
         testingNo = new int[mNumber.Length];
         int[] mChild = new int[mNumber.Length];
         int matchNo = -1;
@@ -383,77 +444,82 @@ public class GameManager : MonoBehaviour
         for(int i = 0; i < mNumber.Length; i++)
         {
             c1 = false; c2 = false; c3 = false;  c4 = false;
-            mChild[i] = 0;
+            mChild[i] = 0; // number of matches in each group.
 
-            for (int j=0; j < 7; j++)
+            if (matchGrp[i].transform.childCount > 0) // preventing error when there's no child object in number 4
             {
-                if (matchGrp[i].transform.GetChild(j).tag == "Match")
+                for (int j = 0; j < 7; j++)
                 {
-                    mChild[i]++;
+                    if (matchGrp[i].transform.GetChild(j).tag == "Match")
+                    {
+                        mChild[i]++;
 
-                    //assig and test key location
-                    if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[1])
-                        c1 = true;
-                    if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[2])
-                        c2 = true;
-                    if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[5])
-                        c3 = true;
-                    if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[6])
-                        c4 = true;
-                }
+                        //assig and test key location
+                        if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[1])
+                            c1 = true;
+                        if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[2])
+                            c2 = true;
+                        if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[5])
+                            c3 = true;
+                        if (matchGrp[i].transform.GetChild(j).localPosition == offsetPos[6])
+                            c4 = true;
+                    }
 
-                if (mChild[i] == 1)
-                    matchNo = -1;
+                    // testing for key positions
 
-                if (mChild[i] == 2)
-                {
-                    if (c1 == true && c2 == true)
-                        matchNo = 1;
-                    else
+                    if (mChild[i] == 1) // if only one match in group, there's no possible number
                         matchNo = -1;
-                }
 
-                if (mChild[i] == 3)
-                {
-                    if (c1 == true && c2 == true && c3 == false && c4 == false)
-                        matchNo = 7;
-                    else
-                        matchNo = -1;
-                }
+                    if (mChild[i] == 2) // 2 matches can make number 1
+                    {
+                        if (c1 == true && c2 == true)
+                            matchNo = 1;
+                        else
+                            matchNo = -1;
+                    }
 
-                if (mChild[i] == 4)
-                {
-                    if (c1 == true && c2 == true && c3 == true && c4 == true)
-                        matchNo = 4;
-                    else
-                        matchNo = -1;
-                }
+                    if (mChild[i] == 3) // 3 matches can make number 7
+                    {
+                        if (c1 == true && c2 == true && c3 == false && c4 == false)
+                            matchNo = 7;
+                        else
+                            matchNo = -1;
+                    }
 
-                if (mChild[i] == 7)
-                    matchNo = 8;
+                    if (mChild[i] == 4) // 4 matches can make number 4
+                    {
+                        if (c1 == true && c2 == true && c3 == true && c4 == true)
+                            matchNo = 4;
+                        else
+                            matchNo = -1;
+                    }
 
-                if(mChild[i] == 5)
-                {
-                    if (c1==true && c2 ==true && c3 == false && c4 == true)
-                        matchNo = 3;
-                    else if (c1 == false && c2 == true && c3 == true && c4 == true)
-                        matchNo = 5;
-                    else if (c1 == true && c2 == false && c3 == false && c4 == true)
-                        matchNo = 2;
-                    else
-                        matchNo = -1;
-                }
+                    if (mChild[i] == 5) // 5 matches can make number 3, 5, or 2
+                    {
+                        if (c1 == true && c2 == true && c3 == false && c4 == true)
+                            matchNo = 3;
+                        else if (c1 == false && c2 == true && c3 == true && c4 == true)
+                            matchNo = 5;
+                        else if (c1 == true && c2 == false && c3 == false && c4 == true)
+                            matchNo = 2;
+                        else
+                            matchNo = -1;
+                    }
 
-                if (mChild[i] == 6)
-                {
-                    if (c1 == true && c2 == true && c3 == true && c4 == true)
-                        matchNo = 9;
-                    else if (c1 == false && c2 == true && c3 == true && c4 == true)
-                        matchNo = 6;
-                    else if (c1 == true && c2 == true && c3 == true && c4 == false)
-                        matchNo = 0;
-                    else
-                        matchNo = -1;
+                    if (mChild[i] == 6) // 6 matches can make number 9, 6 or 0
+                    {
+                        if (c1 == true && c2 == true && c3 == true && c4 == true)
+                            matchNo = 9;
+                        else if (c1 == false && c2 == true && c3 == true && c4 == true)
+                            matchNo = 6;
+                        else if (c1 == true && c2 == true && c3 == true && c4 == false)
+                            matchNo = 0;
+                        else
+                            matchNo = -1;
+                    }
+
+                    if (mChild[i] == 7) // 7 matches can make number 8
+                        matchNo = 8;
                 }
             }
 
@@ -749,7 +815,7 @@ public class GameManager : MonoBehaviour
         holder[1].transform.position = tempPos;
         holder[1].transform.localEulerAngles = tempAngle;
     }
-     void SixZero(GameObject mNum)
+    void SixZero(GameObject mNum)
      {
          Vector3 tempPos, tempAngle;
         List<GameObject> holder = new List<GameObject>();
@@ -769,7 +835,7 @@ public class GameManager : MonoBehaviour
         holder[1].transform.position = tempPos;
         holder[1].transform.localEulerAngles = tempAngle;
     }
-     void NineZero(GameObject mNum)
+    void NineZero(GameObject mNum)
      {
          Vector3 tempPos, tempAngle;
         List<GameObject> holder = new List<GameObject>();
@@ -789,7 +855,7 @@ public class GameManager : MonoBehaviour
         holder[1].transform.position = tempPos;
         holder[1].transform.localEulerAngles = tempAngle;
     }
-     void TwoThree(GameObject mNum)
+    void TwoThree(GameObject mNum)
      {
          Vector3 tempPos, tempAngle;
         List<GameObject> holder = new List<GameObject>();
@@ -809,7 +875,7 @@ public class GameManager : MonoBehaviour
         holder[1].transform.position = tempPos;
         holder[1].transform.localEulerAngles = tempAngle;
     }
-     void ThreeFive(GameObject mNum)
+    void ThreeFive(GameObject mNum)
      {
          Vector3 tempPos, tempAngle;
         List<GameObject> holder = new List<GameObject>();
@@ -840,29 +906,27 @@ public class GameManager : MonoBehaviour
         checkNum[2] = GameObject.Find("Number 3");
         checkNum[3] = GameObject.Find("Number 4");
         if (checkNum[3] == null)
-            checkNum[3] = GameObject.Find("Number 3");
+            checkNum[3] = mNumber[3];
 
-        checkSign[0] = GameObject.Find("Sign 1");
+        checkSign[0] = GameObject.Find("Sign 1"); ;
         checkSign[1] = GameObject.Find("Sign 2");
 
         TestingMatchSymbols(checkSign);
+        TestMatchNumber(checkNum);
+
         for (int i = 0; i < symbols.Length; i++)
         {
             if (testingSymbols[i] == "error")
-            {
-                StartCoroutine("Wrong");
-                isCorrect = false;
-            }
+                GameEvents.ReportGameStateChange(GameState.WRONG);
+
+            if(testingSymbols[i] == "-" && result > testingNo[0])
+                GameEvents.ReportGameStateChange(GameState.WRONG);
         }
 
-        TestMatchNumber(checkNum);
         for (int i = 0; i < checkNum.Length; i++)
         {
             if (testingNo[i] == -1)
-            {
-                StartCoroutine("Wrong");
-                isCorrect = false;
-            }
+                GameEvents.ReportGameStateChange(GameState.WRONG);
         }
 
         Calculation(testingSymbols[0], testingNo[0], testingNo[1]);
@@ -870,52 +934,31 @@ public class GameManager : MonoBehaviour
         if (result >= 10)
         {
             if (testingNo[2] == 1 && testingNo[3] == result - 10)
-            {
-                StartCoroutine("Correct");
-                isCorrect = true;
-            }
+                GameEvents.ReportGameStateChange(GameState.CORRECT);
             else
-            {
-                StartCoroutine("Wrong");
-                isCorrect = false;
-            }
+                GameEvents.ReportGameStateChange(GameState.WRONG);
         }
         else
         {
             if (testingNo[2] == result)
-            {
-                StartCoroutine("Correct");
-                isCorrect = true;
-            }
+                GameEvents.ReportGameStateChange(GameState.CORRECT);
             else
-            {
-                StartCoroutine("Wrong");
-                isCorrect = false;
-            }
-        }
+                GameEvents.ReportGameStateChange(GameState.WRONG);
 
-        Debug.Log("No1: " + testingNo[0]);
-        Debug.Log(testingSymbols[0]);
-        Debug.Log("No2: " + testingNo[1]);
-        Debug.Log("No3: " + testingNo[2]);
-        Debug.Log("No4: " + testingNo[3]);
+        }
     }
 
     private IEnumerator Correct()
     {
-        FindObjectOfType<UpdateUI>().correctPanel.SetActive(true);
         yield return new WaitForSeconds(1f);
-        FindObjectOfType<UpdateUI>().levelSelect.SetActive(true);
-        Time.timeScale = 0;
+        _corrected++;
+        GameEvents.ReportGameStateChange(GameState.SELECT);
     }
 
     private IEnumerator Wrong()
     {
-        FindObjectOfType<UpdateUI>().incorrectPanel.SetActive(true);
         yield return new WaitForSeconds(1f);
-        FindObjectOfType<UpdateUI>().levelSelect.SetActive(true);
-        Time.timeScale = 0;
-        
+        GameEvents.ReportGameStateChange(GameState.SELECT);
     }
 
     void Record()
@@ -923,83 +966,81 @@ public class GameManager : MonoBehaviour
         mRecord = new GameObject[mNumber.Length];
         sRecord = new GameObject[mSymbols.Length];
 
-        mRecord[0] = Instantiate(GameObject.Find("Number 1"), mNumber[0].transform.position, Quaternion.identity) as GameObject;
+        mRecord[0] = Instantiate(mNumber[0], mNumber[0].transform.position, Quaternion.identity) as GameObject;
+        mRecord[0].transform.name = "mRecord 1";
         mRecord[0].SetActive(false);
 
-        mRecord[1] = Instantiate(GameObject.Find("Number 2"), mNumber[1].transform.position, Quaternion.identity) as GameObject;
+        mRecord[1] = Instantiate(mNumber[1], mNumber[1].transform.position, Quaternion.identity) as GameObject;
+        mRecord[1].transform.name = "mRecord 2";
         mRecord[1].SetActive(false);
 
-        mRecord[2] = Instantiate(GameObject.Find("Number 3"), mNumber[2].transform.position, Quaternion.identity) as GameObject;
+        mRecord[2] = Instantiate(mNumber[2], mNumber[2].transform.position, Quaternion.identity) as GameObject;
+        mRecord[2].transform.name = "mRecord 3";
         mRecord[2].SetActive(false);
 
         if (mNumber[3].activeSelf == true)
-            mRecord[3] = Instantiate(GameObject.Find("Number 4"), mNumber[3].transform.position, Quaternion.identity) as GameObject;
+            mRecord[3] = Instantiate(mNumber[3], mNumber[3].transform.position, Quaternion.identity) as GameObject;
         else
-        {
-            mRecord[3] = Instantiate(GameObject.Find("Number 3"), mNumber[3].transform.position, Quaternion.identity) as GameObject;
-            testingNo[3] = testingNo[2];
-        }
-
+            mRecord[3] = new GameObject();
+        mRecord[3].transform.name = "mRecord 4";
         mRecord[3].SetActive(false);
 
-        sRecord[0] = Instantiate(GameObject.Find("Sign 1"), mSymbols[0].transform.position, Quaternion.identity) as GameObject;
+        sRecord[0] = Instantiate(mSymbols[0], mSymbols[0].transform.position, Quaternion.identity) as GameObject;
+        sRecord[0].transform.name = "sRecord 1";
         sRecord[0].SetActive(false);
 
-        sRecord[1] = Instantiate(GameObject.Find("Sign 2"), mSymbols[1].transform.position, Quaternion.identity) as GameObject;
+        sRecord[1] = Instantiate(mSymbols[1], mSymbols[1].transform.position, Quaternion.identity) as GameObject;
+        sRecord[1].transform.name = "sRecord 2";
         sRecord[1].SetActive(false);
     }
     public void Replay()
     {
         Time.timeScale = 1;
-        
-        for (int i = 0; i < mNumber.Length; i++)
+        ClearNumber();
+        mNumber = new GameObject[mNumber.Length];
+        mSymbols = new GameObject[mSymbols.Length];
+
+        foreach (GameObject match in mRecord)
         {
-            Destroy(mNumber[i]);
+            match.SetActive(true);
         }
-
-        for (int i = 0; i < mSymbols.Length; i++)
+        mNumber[0] = Instantiate(mRecord[0], mRecord[0].transform.position, Quaternion.identity) as GameObject;
+        mNumber[0].transform.name = "Number 1";
+        mNumber[1] = Instantiate(mRecord[1], mRecord[1].transform.position, Quaternion.identity) as GameObject;
+        mNumber[1].transform.name = "Number 2";
+        mNumber[2] = Instantiate(mRecord[2], mRecord[2].transform.position, Quaternion.identity) as GameObject;
+        mNumber[2].transform.name = "Number 3";
+        mNumber[3] = Instantiate(mRecord[3], mRecord[3].transform.position, Quaternion.identity) as GameObject;
+        mNumber[3].transform.name = "Number 4";
+        if (mRecord[3].transform.childCount > 0)
         {
-            Destroy(mSymbols[i]);
+            mNumber[3].SetActive(true);
+            sigleDig = false;
         }
-        
-        CreateTargetPosition();
-
-            for (int i = 0; i < mRecord.Length; i++)
-        {
-            while (mRecord[i].transform.childCount != 0) //using while loop to make sure all children object has been changed, had issue with using for loop only.
-            {
-                for (int j = 0; j < mRecord[i].transform.childCount; j++)
-                {
-                    mRecord[i].transform.GetChild(j).SetParent(mNumber[i].transform, true);
-                }
-            }
-
-            Destroy(mRecord[i]);
-        }
-
-        for (int i = 0; i < mSymbols.Length; i++)
-        {
-            while (sRecord[i].transform.childCount != 0)
-            {
-                for (int j = 0; j < sRecord[i].transform.childCount; j++)
-                {
-                    sRecord[i].transform.GetChild(j).SetParent(mSymbols[i].transform, true);
-                }
-            }
-
-            Destroy(sRecord[i].gameObject);
-        }
-
-        if (isCorrect == false)
-            _attempt++;
         else
-            _corrected++;
-
-        if (sigleDig == true)
+        {
             mNumber[3].SetActive(false);
-        
-        FindObjectOfType<UpdateUI>().levelSelect.SetActive(false);
-        FindObjectOfType<UpdateUI>().correctPanel.SetActive(false);
-        FindObjectOfType<UpdateUI>().incorrectPanel.SetActive(false);
+            sigleDig = true;
+        }
+        mNumber[3].transform.name = "Number 4";
+        foreach (GameObject match in mRecord)
+        {
+            match.SetActive(false);
+        }
+
+        foreach (GameObject match in sRecord)
+        {
+            match.SetActive(true);
+        }
+        mSymbols[0] = Instantiate(sRecord[0], sRecord[0].transform.position, Quaternion.identity) as GameObject;
+        mSymbols[0].transform.name = "Sign 1";
+        mSymbols[1] = Instantiate(sRecord[1], sRecord[1].transform.position, Quaternion.identity) as GameObject;
+        mSymbols[1].transform.name = "Sign 2";
+        foreach (GameObject match in sRecord)
+        {
+            match.SetActive(false);
+        }
+
+        _attempt--;
     }
 }
