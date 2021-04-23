@@ -8,8 +8,8 @@ public class MatchSwap : MatchMath
     private Vector3 tempPos, tempAngles;
    public Transform oriParent, tarParent;
 
-    private bool t2 = true;
-    private bool t1 = true;
+    private bool t2 = true; // test if the mouse has selected a match, true = not select, false = selected
+    private bool t1 = true; // test if the mouse botton release position is an avaiable empty space, true = not on an empty space, false = on position
 
     private Vector3 GetMouseAsWorldPoint()
     {
@@ -25,7 +25,7 @@ public class MatchSwap : MatchMath
     {
         if (Input.GetMouseButtonDown(0))
         {
-            //referencing from website: github.com/Syphon/Unity3D/issues/5  --> ScreenPointToRay(Input.mousePosition) is always problematic with orthographic camer
+            //ScreenPointToRay(Input.mousePosition) is always problematic with orthographic camer
             //creating modifying factors to manuelly calculate the world position
             Vector2 camToScreenFactor = new Vector2(Camera.main.pixelWidth / Screen.width, Camera.main.pixelHeight / Screen.height);
             Vector3 camToScreenPos = new Vector3(Input.mousePosition.x * camToScreenFactor.x, Input.mousePosition.y * camToScreenFactor.y, Camera.main.nearClipPlane);

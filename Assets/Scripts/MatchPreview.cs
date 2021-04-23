@@ -5,7 +5,7 @@ using UnityEngine;
 public class MatchPreview : MonoBehaviour
 {
 
-    private void OnTriggerStay (Collider other)
+    private void OnTriggerEnter (Collider other)
     {
         if (other.gameObject.tag == "Match")
             other.transform.localEulerAngles = transform.localEulerAngles;

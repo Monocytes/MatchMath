@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 3776527971726051786}
   - component: {fileID: -7446567156207621435}
   m_Layer: 0
-  m_Name: PosHolder
+  m_Name: PosHolderPrefab
   m_TagString: Empty
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
